@@ -1,0 +1,223 @@
+### creating counting windows for counting T>C conversion and for transcriptional output
+
+library(checkmate)
+library(dplyr)
+#### counting windows for half life calculations
+annotation_custom = read.table(paste0(BOut, "/final90percent/ends_greater90percent_intergenic_n100.txt"),stringsAsFactors = F,sep="\t",header = T)
+
+assertDataFrame(annotation_custom,ncols=11)
+
+annotation_custom = annotation_custom[,c(1:8)]
+
+colnames(annotation_custom) = paste("V",c(1:8),sep="")
+
+
+### refSeq annotation
+
+
+
+### adding refSeq anntoation here 
+
+#refSeq = read.table("/groups/bioinfo/shared/Ameres.GRP/incoming/3PrimeEndAnnotation/annotations_mm10/refSeq_mm10_GRCm38_06-march-2017/processed/refSeq_mrna_utrsPresent.bed",stringsAsFactors = F)
+
+refFlat <- read.table(paste0(ucscDir, "/refFlat.txt"), stringsAsFactors = F)
+refSeqTranscr <- refFlat[grep("NM_", refFlat$V2),]
+
+#add ncRNA
+ncRNA <- read.table(paste0(ensemblDir, "/ncRNA_refSeq.txt"), stringsAsFactors=F, header=T)
+head(ncRNA)
+ncRNA <- refFlat[is.element(refFlat$V2, ncRNA[,"refseq_ncrna"]),]
+write.table(ncRNA, paste0(BOut, "/final90percent/included.ncRNA.txt"),sep="\t",quote = F,row.names = F,col.names = F)
+
+refSeqTranscr <- rbind(refSeqTranscr, ncRNA)
+#refSeqTranscr <- merge(refFlat, refSeq, by.x = "V2", by.y = "V7")
+#nrow(refSeq)
+#nrow(refSeqTranscr)
+refSeqTranscr <- unique(refSeqTranscr[,c("V3", "V5", "V6", "V1", "V4", "V2")])
+colnames(refSeqTranscr) <- c("chr", "start", "end", "gid", "strand", "tid")
+
+### for this step we need the merged UTR annotation, i.e merged utr exons, so we need to get the most distal end from the annotation
+#refSeq_plus = refSeq[which(refSeq$V6 == "+"),]
+#refSeq_minus = refSeq[which(refSeq$V6 == "-"),]
+
+
+#refSeq_plus = refSeq_plus %>% group_by(b) %>% filter(V3==max(V3))
+#refSeq_minus = refSeq_minus %>% group_by(V7) %>% filter(V2==min(V2))
+
+
+#refSeq = rbind(refSeq_minus,refSeq_plus)
+#refSeq = as.data.frame(refSeq,stringsAsFactors=F)
+
+#refSeq = refSeq[,c(1:7)]
+refSeq <- cbind(refSeqTranscr[,1:4], 0,  refSeqTranscr[,5:6])
+
+refSeq$V8 = "refSeqOriginal"
+colnames(refSeq) <- paste0("V", 1:8)
+#refSeq$V9 = paste(refSeq$V1,refSeq$V2,refSeq$V3,refSeq$V6,sep="_")
+#refSeq = refSeq %>% group_by(V9) %>% mutate(collapsed = paste(V7, collapse = ","))
+
+
+#refSeq = refSeq[!duplicated(refSeq[,c(1:4,10)]),] #duplicates???
+#refSeq$V7 = refSeq$collapsed
+#refSeq = as.data.frame(refSeq,stringsAsFactors=F)
+#refSeq = refSeq[,c(1:8)]
+
+
+annotation_custom_positive = annotation_custom[which(annotation_custom$V6 == "+"),]
+annotation_custom_negative = annotation_custom[which(annotation_custom$V6 == "-"),]
+
+refSeq_positive = refSeq[which(refSeq$V6 == "+"),]
+refSeq_negative = refSeq[which(refSeq$V6 == "-"),]
+
+
+######################## positive strand ###########################
+library(GenomicRanges)
+annotation_custom_positive = rbind(annotation_custom_positive,refSeq_positive)
+
+annotation_custom_positive$V2 = annotation_custom_positive$V3 -250
+annotation_custom_positive$V2 = annotation_custom_positive$V2 + 1
+
+annotation_custom_positive_split = split(annotation_custom_positive,f = annotation_custom_positive$V4,drop = T )
+
+positive_ranges = lapply(annotation_custom_positive_split,function(x) with(x,GRanges(V1, IRanges(start = V2,end = V3),strand = V6,score=0,names=V4)))
+
+#positive_ranges <- with(annotation_custom_positive,GRanges(V1, IRanges(start = V2,end = V3),strand = V6,score=0,names=V4))
+
+
+allAnnotations_plus_ranges_reduced = lapply(positive_ranges,function(x) unlist(reduce(split(x, elementMetadata(x)$names))) )
+#allAnnotations_plus_ranges_reduced = unlist(reduce(split(a[[1]], elementMetadata(a[[1]])$names))) 
+
+
+reducedToDf = function(reduced){
+  reduced <- data.frame(seqnames=seqnames(reduced),
+                              starts=start(reduced),
+                              ends=end(reduced),
+                              names=c(names(reduced)),
+                              scores=0,strand = strand(reduced))
+  return(reduced)
+  }
+
+allAnnotations_plus_ranges_reduced_df = lapply(allAnnotations_plus_ranges_reduced,function(x) reducedToDf(x))
+
+################## minus strand ############################
+
+annotation_custom_negative = rbind(annotation_custom_negative,refSeq_negative)
+
+annotation_custom_negative$V3 = annotation_custom_negative$V2 + 250
+
+## changing to 1 based
+
+annotation_custom_negative$V2 = annotation_custom_negative$V2 + 1
+
+annotation_custom_negative_split = split(annotation_custom_negative,f = annotation_custom_negative$V4,drop = T )
+
+negative_ranges = lapply(annotation_custom_negative_split,function(x) with(x,GRanges(V1, IRanges(start = V2,end = V3),strand = V6,score=0,names=V4)))
+
+
+allAnnotations_minus_ranges_reduced = lapply(negative_ranges,function(x) unlist(reduce(split(x, elementMetadata(x)$names))) )
+#allAnnotations_plus_ranges_reduced = unlist(reduce(split(a[[1]], elementMetadata(a[[1]])$names))) 
+
+
+
+allAnnotations_minus_ranges_reduced_df = lapply(allAnnotations_minus_ranges_reduced,function(x) reducedToDf(x))
+
+
+allAnnotations_plus_ranges_reduced_df = do.call(rbind,allAnnotations_plus_ranges_reduced_df)
+allAnnotations_minus_ranges_reduced_df = do.call(rbind,allAnnotations_minus_ranges_reduced_df)
+
+allAnnotations = rbind(allAnnotations_plus_ranges_reduced_df,allAnnotations_minus_ranges_reduced_df)
+
+### converting back to 0 based annotations : 
+
+allAnnotations$starts = allAnnotations$starts -1
+
+#add primary miRNA loci
+primiRNA <- read.table(paste0(BIn, "/pri_miRNAloci.txt"))
+primiRNA <- primiRNA[,1:6]
+colnames(primiRNA) <- c("seqnames", "starts", "ends", "names", "scores", "strand")
+allAnnotations <- rbind(allAnnotations, primiRNA)
+
+#valid chromosomes
+chromosomes_mm = paste0("chr", c(1:19,"X","Y"))
+allAnnotations = allAnnotations[is.element(allAnnotations$seqnames, chromosomes_mm),]
+
+write.table(allAnnotations,paste0(BOut, "/final90percent/allAnnotations.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+
+#########################################################################
+## counting windows for transcriptional output and multimapping - for this we need the ensembl 3' utr annotations, refSeq 3' utr annotations
+## and intergenic peaks that pass the 90% threshold
+#########################################################################
+
+
+refSeq = read.table(paste0(ucscDir, "/processed/refSeq_mrna_utrsPresent.bed"),stringsAsFactors = F)
+ensembl = read.table(paste0(ensemblDir, "/proteinCoding_annotatedUTRs.bed"),stringsAsFactors = F)
+
+allAnnotations <- cbind(allAnnotations, "250CountWindow")
+colnames(allAnnotations) <- paste0("V", 1:7)
+refSeq_ensembl = rbind(refSeq,ensembl,allAnnotations)
+refSeq_ensembl_positive = refSeq_ensembl %>% filter(V6=="+")
+refSeq_ensembl_negative = refSeq_ensembl %>% filter(V6=="-")
+
+
+#annotation_custom = read.table("/clustertmp/pooja/mESCinput/final90percent//ends_greater90percent_intergenic_n100.txt",stringsAsFactors = F,sep="\t",header = T)
+#annotation_custom_intergenic = annotation_custom[is.element(annotation_custom$peakKind,"intergenic"),]
+#annotation_custom_intergenic = annotation_custom_intergenic[,c(1:7)]
+#colnames(annotation_custom_intergenic) = paste0("V",c(1:ncol(annotation_custom_intergenic)))
+#annotation_custom_intergenic_positive = annotation_custom_intergenic %>% filter(V6 == "+") %>% mutate(V2 = V3-250)
+#annotation_custom_intergenic_negative = annotation_custom_intergenic %>% filter(V6 == "-") %>% mutate(V3 = V2+250)
+
+total_positive = refSeq_ensembl_positive
+#total_positive = total_positive[!duplicated(total_positive[,c(1:5)]),]
+total_positive$V2 = total_positive$V2 +1
+total_negative = refSeq_ensembl_negative
+#total_negative = total_negative[!duplicated(total_negative[,c(1:5)]),]
+total_negative$V2 = total_negative$V2 + 1
+###### now reducing Ovelrapping annotations per gene
+
+
+
+### positive strand 
+
+total_positive_split = split(total_positive,f = total_positive$V4,drop = T )
+
+total_positive_split_ranges = lapply(total_positive_split,function(x) with(x,GRanges(V1, IRanges(start = V2,end = V3),strand = V6,score=0,names=V4))
+)
+
+
+total_positive_reduced = lapply(total_positive_split_ranges,function(x) unlist(reduce(split(x, elementMetadata(x)$names))) )
+#allAnnotations_plus_ranges_reduced = unlist(reduce(split(a[[1]], elementMetadata(a[[1]])$names))) 
+
+
+
+total_positive_reduced_df = lapply(total_positive_reduced,function(x) reducedToDf(x))
+
+total_positive_reduced_df = do.call(rbind,total_positive_reduced_df)
+
+
+####### negative strand 
+
+
+
+total_negative_split = split(total_negative,f = total_negative$V4,drop = T )
+
+total_negative_split_ranges = lapply(total_negative_split,function(x) with(x,GRanges(V1, IRanges(start = V2,end = V3),strand = V6,score=0,names=V4))
+)
+
+
+total_negative_reduced = lapply(total_negative_split_ranges,function(x) unlist(reduce(split(x, elementMetadata(x)$names))) )
+#allAnnotations_plus_ranges_reduced = unlist(reduce(split(a[[1]], elementMetadata(a[[1]])$names))) 
+
+
+
+total_negative_reduced_df = lapply(total_negative_reduced,function(x) reducedToDf(x))
+
+total_negative_reduced_df = do.call(rbind,total_negative_reduced_df)
+
+countingWindowsTranscriptionalOutput = rbind(total_positive_reduced_df,total_negative_reduced_df)
+countingWindowsTranscriptionalOutput$starts = countingWindowsTranscriptionalOutput$starts -1
+
+
+write.table(countingWindowsTranscriptionalOutput,paste0(BOut, "/final90percent/countingWindows_transcriptionalOutput.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+
+
+

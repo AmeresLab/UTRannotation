@@ -1,0 +1,291 @@
+### counting 200 nts in the UTR :
+library(reshape2)
+library(ggplot2)
+args = c(200,0.1)
+customAnnotation = read.table(paste0(BOut, "/intergenicPeaks/toExtend_longestEnsembl_refSeq_n100_sorted_distances.bed"),sep="\t")
+customAnnotation = customAnnotation[-which(customAnnotation$V14=="-1"),]
+
+#customAnnotation = customAnnotation[-grep("random",customAnnotation$V1),]
+#customAnnotation = customAnnotation[-grep("Un",customAnnotation$V1),]
+customAnnotation_short = cbind.data.frame(customAnnotation[,c(1:7)],customAnnotation$V14)
+
+colnames(customAnnotation_short)= paste("V",c(1:ncol(customAnnotation_short)),sep="")
+customAnnotation_short = customAnnotation_short[!duplicated(customAnnotation_short),]
+customAnnotation = customAnnotation_short
+customAnnotation_plus = customAnnotation[which(customAnnotation$V6 == "+"),]
+customAnnotation_minus = customAnnotation[which(customAnnotation$V6 == "-"),]
+
+####################################
+##### taking the last 200 nts of the annotation. and calculating RNAseq signa using bedtools multicov.
+####################################
+
+customAnnotation_plus$V2 = customAnnotation_plus$V3 - as.numeric(args[1]) # start = end -200
+customAnnotation_minus$V3 = customAnnotation_minus$V2 + as.numeric(args[1]) # end = start + 200
+##### 
+
+customAnnotationIntoUTR = rbind(customAnnotation_plus,customAnnotation_minus)
+customAnnotation = rbind(customAnnotation_plus,customAnnotation_minus)
+
+#####DIRECTORY SHOULD BE CHANGED TO SOMEWHERE TMP.
+
+### writing the annotation (last 200nts of the annotations) for counting RNAseq signal. 
+
+write.table(customAnnotationIntoUTR,paste0(BOut, "/ExtendingINtergenicRegions/customAnnotation_longestTranscripts_100IntoUTR.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+
+counts_inUTR100 = system(paste0("bedtools multicov -split -S -bams ", BIn, "/rnaseq/*_single.Aligned.sortedByCoord.out.bam -bed ", BOut, "/ExtendingINtergenicRegions/customAnnotation_longestTranscripts_100IntoUTR.bed"),intern=T)
+
+write.table(counts_inUTR100,paste0(BOut, "/coverage/customAnnotation_longestTranscripts_IntoUTR_coverage_",args[1],"_",args[2],".bed"),quote = F,row.names = F,col.names = F)
+
+counts_inUTR100 = read.table(paste0(BOut, "/coverage/customAnnotation_longestTranscripts_IntoUTR_coverage_",args[1],"_",args[2],".bed"),sep="\t")
+
+counts_inUTR100$meanCounts = (counts_inUTR100$V9 +counts_inUTR100$V10 + counts_inUTR100$V11)/3
+
+
+
+######
+
+meanCounts = cbind.data.frame(counts_inUTR100$V4,counts_inUTR100$meanCounts)
+colnames(meanCounts) = c("V4","inUtrMeanCounts")
+
+#customAnnotation= customAnnotation[order(customAnnotation$V4),]
+#meanCounts = meanCounts[order(meanCounts$V4),]
+
+#identical(as.character(meanCounts$V4),as.character(customAnnotation$V4))
+
+n <- colnames(customAnnotation)
+customAnnotation= merge(customAnnotation,meanCounts, by = "V4")
+customAnnotation <- customAnnotation[,c(n,"inUtrMeanCounts")]
+
+#### filteering out entries that have mean (RNAseq) < = 10
+
+customAnnotation = customAnnotation[which(customAnnotation[,9]>10),]
+customAnnotation_plus = customAnnotation[which(customAnnotation$V6 == "+"),]
+customAnnotation_minus = customAnnotation[which(customAnnotation$V6 == "-"),]
+
+
+
+thresholds = seq(as.numeric(args[1]),40000,as.numeric(args[1]))
+i=as.numeric(args[1])
+ends = c()
+while (i<=40000){
+  ends = c(ends,i)
+  i = i + 20
+  
+}
+
+starts = ends - as.numeric(args[1])
+
+thresholds = cbind.data.frame(starts,ends,stringsAsFactors=F)
+
+
+thresholds = thresholds[-1,]
+interGenic_thresholds = vector("list",nrow(thresholds))
+
+customAnnotation_plus_original = customAnnotation_plus
+customAnnotation_minus_original = customAnnotation_minus
+
+#### looping over by shifting the ends and starts by 20 in every iteration.
+
+for(i in 1:nrow(thresholds)){
+  
+ 
+  customAnnotation_plus$V2 = customAnnotation_plus$V2 + 20
+  customAnnotation_plus$V3 = customAnnotation_plus$V3 +20
+  
+  
+  customAnnotation_minus$V3 = customAnnotation_minus$V3-20
+  customAnnotation_minus$V2 = customAnnotation_minus$V2 - 20
+  
+  customAnnotation_offSet = rbind(customAnnotation_plus,customAnnotation_minus)
+  external_gene_names = customAnnotation_offSet$V4
+  
+  
+  ### checking if we are going into negative coordinates by adding and subtracting the
+  
+  customAnnotation_offSet = customAnnotation_offSet[which(customAnnotation_offSet$V2 >0),]
+  customAnnotation_offSet = customAnnotation_offSet[which(customAnnotation_offSet$V3 >0),]
+
+    if (nrow(customAnnotation_offSet) == 0)
+    {
+        break
+    }
+    
+  ###### the file paths have to be modified
+  write.table(customAnnotation_offSet,paste0(BOut, "/coverage/customAnnotation_longestTranscripts_tmp_downstream.bed"),sep="\t",row.names = F,col.names = F,quote = F)
+  outFile = paste0(BOut, "/coverage/customAnnotation_longestTranscripts_",thresholds[i,1],thresholds[i,2],"downstream_coverage.bed")
+  ### calculating RNAseq signal in the offset refion
+    ### -S is used as mapping of this RNAseq sample as reads were not reverse-complemented before mapping. 
+  
+  counts_offSet = system(paste0("bedtools  multicov -split -S -bams ", BIn, "/rnaseq/*_single.Aligned.sortedByCoord.out.bam -bed ", BOut, "/coverage/customAnnotation_longestTranscripts_tmp_downstream.bed"),intern = T)
+  write.table(counts_offSet,outFile,quote = F,row.names = F,col.names = F,sep="\t")
+  
+  counts_offSet = read.table(outFile,sep="\t")
+  
+  
+  counts_offSet$meanCounts = (counts_offSet[,(ncol(counts_offSet)-2)] +counts_offSet[,(ncol(counts_offSet)-1)] + counts_offSet[,(ncol(counts_offSet))])/3
+  
+  #### the column V9 contains the mean of RNAseq singal in the UTR. calculate thefraction of signal in the offSet bin to the signal inUTR (V9). 
+  ## we continue extending the bins in the next iteration, only if the singal in the offset bin is >10% of signal in the UTR.
+  
+  counts_offSet$fractionOfinUtr = counts_offSet$meanCounts/ counts_offSet$V9
+  
+  counts_offSet = counts_offSet[which(counts_offSet$fractionOfinUtr >0.1),]
+  counts_offSet_10PercentThreshold = counts_offSet
+  counts_offSet_10PercentThreshold = counts_offSet_10PercentThreshold[which(counts_offSet_10PercentThreshold$V8>thresholds$starts[i]),]
+  interGenic_thresholds[[i]]= counts_offSet_10PercentThreshold
+  counts_offSet_10PercentThreshold = counts_offSet_10PercentThreshold[,c(1:9)]
+  
+  customAnnotation_plus = counts_offSet_10PercentThreshold[which(counts_offSet_10PercentThreshold$V6=="+"),]
+  customAnnotation_minus = counts_offSet_10PercentThreshold[which(counts_offSet_10PercentThreshold$V6=="-"),]
+  cat(i)
+}
+##interGenic_thresholds = interGenic_thresholds[c(1:5)]
+names(interGenic_thresholds) = paste(thresholds$starts,sep="_")
+
+
+##### FOLDERS HAVE TO BE CHANGED
+save(interGenic_thresholds,file = paste0(BOut, "/coverage/intergenicPeaks_200_20bins_n100_new_9March.Rdata"))
+
+load(file = paste0(BOut, "/coverage/intergenicPeaks_200_20bins_n100_new_9March.Rdata"))
+#interGenic_thresholds[[1991]] = NULL
+
+
+
+#interGenic_thresholds[[1]] = NULL
+
+
+#delete.NULLs  <-  function(x.list){   # delele null/empty entries in a list
+#  x.list[unlist(lapply(x.list, length) > 1)]
+#}
+library(reshape)
+numberPerBin = melt(lapply(interGenic_thresholds, function(x) { if (is.null(x)) { return(0) } else {return(nrow(x))}}))
+library(ggplot2)
+
+#### NEED TO CHANGE FOLDER PATH
+
+pdf(paste0(BOut, "/coverage/numberOfBins_rnaseq_new.pdf"),height=5,width=10)
+ggplot(numberPerBin,aes(y=value,x=c(1:nrow(numberPerBin)))) + geom_point() + theme_bw() + xlab("Bin number") + ylab("Number of peaks with RNAseq signal")  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+dev.off()
+
+#### NEED TO CHANGE FOLDER PATH
+
+
+#pdf("/Users/pooja.bhat/Dropbox/UTRannotation/mESC/intergenicPeaks/plots/numberOfBins_rnaseq_new.pdf",height=5,width=10)
+#ggplot(numberPerBin,aes(y=value,x=c(1:nrow(numberPerBin)))) + geom_point() + theme_bw() + xlab("Bin number") + ylab("Number of peaks with RNAseq signal")  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+#dev.off()
+
+#### NEED TO CHANGE FOLDER PATH
+write.table(numberPerBin, paste0(BOut, "/coverage/numberOfRNAseqContaingBins.txt"),sep="\t")
+
+# for(i in 1:length(interGenic_thresholds)){
+#   
+#   interGenic_thresholds[[i]] = interGenic_thresholds[[i]][which(interGenic_thresholds[[i]]$V3 - interGenic_thresholds[[i]]$V2 == 200),]
+# }
+
+
+totalBins = do.call(rbind, interGenic_thresholds)
+
+library(GenomicRanges)
+### reading in the nonOverlapping peaaks we defined by hierarchical overlapping of ends with refSeq UTRs (protein coding), ensembl UTRs (protein coding), exons (refSeq protein coding), introns (refSeq protein coding)
+
+nonOverlappning = read.table(paste0(BOut, "/polyAmapping_allTimepoints/n_100_global_a0/nonOverlapping_total.bed"),sep="\t",stringsAsFactors = F)
+
+#START PLUS ONE??????
+nonOverlappingPas = nonOverlappning[-grep("noPAS",nonOverlappning$V12),]
+nonOverlappingNoPas = nonOverlappning[grep("noPAS",nonOverlappning$V12),]
+
+### filtering based on the A threshold we defined to distinguish true priming event from internal priming events. 
+
+nonOverlappingNoPas = nonOverlappingNoPas[which(nonOverlappingNoPas$V10<0.24),]
+nonOverlappingPas = nonOverlappingPas[which(nonOverlappingPas$V10<0.36),]
+
+nonOverlapping = rbind(nonOverlappingPas, nonOverlappingNoPas)
+
+nonOverlappingPeaks_plus = nonOverlapping[which(nonOverlapping$V6 == "+" ),]
+nonOverlappingPeaks_minus = nonOverlapping[which(nonOverlapping$V6 == "-" ),]
+
+#nonOverlappingPeaks_plus_Granges = with(nonOverlappingPeaks_plus,GRanges(V1,IRanges(start=V2,end=V3),strand = V6))
+#nonOverlappingPeaks_minus_Granges = with(nonOverlappingPeaks_minus,GRanges(V1,IRanges(start=V2,end=V3),strand = V6))
+
+
+
+
+
+creatingGranges  = function(counts_offSet100_10PercentThreshold,nonOverlappingPeaks_plus,nonOverlappingPeaks_minus){
+
+    if(is.null(counts_offSet100_10PercentThreshold))
+    {
+        return(NULL)
+    }
+    
+  # nonOverlappingPeaks_plus = nonOverlapping[which(nonOverlapping$V6 == "+" ),]
+  # nonOverlappingPeaks_minus = nonOverlapping[which(nonOverlapping$V6 == "-" ),]
+  nonOverlappingPeaks_plus_Granges = with(nonOverlappingPeaks_plus,GRanges(V1,IRanges(start=V2,end=V3),strand = V6))
+  nonOverlappingPeaks_minus_Granges = with(nonOverlappingPeaks_minus,GRanges(V1,IRanges(start=V2,end=V3),strand = V6))
+
+    start(nonOverlappingPeaks_plus_Granges) <- start(nonOverlappingPeaks_plus_Granges)+1
+    start(nonOverlappingPeaks_minus_Granges) <- start(nonOverlappingPeaks_minus_Granges)+1
+    
+  counts_offSet100_10PercentThreshold_positive = counts_offSet100_10PercentThreshold[which(counts_offSet100_10PercentThreshold$V6=="+"),]
+  counts_offSet100_10PercentThreshold_negative = counts_offSet100_10PercentThreshold[which(counts_offSet100_10PercentThreshold$V6=="-"),]
+  
+  counts_offSet100_10PercentThreshold_positive_granges  = with(counts_offSet100_10PercentThreshold_positive,GRanges(V1,IRanges(start=V2,end=V3),strand = V6))
+  counts_offSet100_10PercentThreshold_negative_granges =  with(counts_offSet100_10PercentThreshold_negative,GRanges(V1,IRanges(start=V2,end=V3),strand = V6))
+
+    start(counts_offSet100_10PercentThreshold_positive_granges) <- start(counts_offSet100_10PercentThreshold_positive_granges)+1
+    start(counts_offSet100_10PercentThreshold_negative_granges) <- start(counts_offSet100_10PercentThreshold_negative_granges)+1
+
+    
+  overlaps_positive = findOverlaps(nonOverlappingPeaks_plus_Granges,counts_offSet100_10PercentThreshold_positive_granges)
+  overlaps_negative = findOverlaps(nonOverlappingPeaks_minus_Granges,counts_offSet100_10PercentThreshold_negative_granges)
+  
+  
+  querySubject_positive =cbind(  nonOverlappingPeaks_plus[queryHits(overlaps_positive),],counts_offSet100_10PercentThreshold_positive[subjectHits(overlaps_positive),])
+  querySubject_negative =cbind(  nonOverlappingPeaks_minus[queryHits(overlaps_negative),],counts_offSet100_10PercentThreshold_negative[subjectHits(overlaps_negative),])
+  
+  subjectQuery = rbind(querySubject_positive,querySubject_negative)
+  
+  return(subjectQuery)
+}
+
+### overlap the offset counting windows with non-overlapping peaks. 
+
+overlapPeaks = lapply(interGenic_thresholds,function(x) creatingGranges(counts_offSet100_10PercentThreshold = x,nonOverlappingPeaks_plus = nonOverlappingPeaks_plus,nonOverlappingPeaks_minus = nonOverlappingPeaks_minus))
+
+numberOverlappingPeaks = melt(lapply(overlapPeaks, function(x) { if (is.null(x)) { return(0) } else {return(nrow(x))}}))
+pdf(paste0(BOut, "/coverage/numberOfPeaks_polyAsupport_new.pdf"),height = 5,width = 10)
+ggplot(numberOverlappingPeaks,aes(x=c(1:nrow(numberOverlappingPeaks)),y=value)) + geom_point() + theme_bw() + xlab("Bin number") + ylab("Number of regions with polyA support")  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+dev.off()
+
+overlapPeaks = do.call(rbind,overlapPeaks)
+overlapPeaks = overlapPeaks[!duplicated(overlapPeaks[,c(1:3)]),]
+
+colnames(overlapPeaks) = c("chr",	"start","end"	,"peakName"	,"numberOfpolyAends"	,"strand",	"120ntSeq"	,"internalId(chr_start)",	"20nts (+1 to +20)",	"Acontent"	,"upStreamSequence(-40 to -5)",	"Acontent_motif",	"chr",	"RNAseqbinStart",	"RNAseqbinEnd",	"geneName","score",	"strand","refSeq/ensemblid","closestDistancetonextexon",	"RNAseqReads_rep1",	"RNAseqReads_rep2",	"RNAseqReads_rep3",	"mean(RNAseq)",	"RNAseq(bin)/rnaSeq(inUTR)")										
+
+######### WRINTING OUT THE TABLES####################
+
+
+write.table(overlapPeaks,paste0(BOut, "/coverage/allIntergenicPeaks_n100_new.txt"),sep="\t",quote = F, row.names = F,col.names = F)
+
+write.table(numberOverlappingPeaks,paste0(BOut, "/coverage/numberOfOverlappingPeaksPerBin.txt"),sep="\t",quote = F, row.names = F,col.names = F)
+
+
+
+
+colnames(overlapPeaks) = paste("V",1:ncol(overlapPeaks),sep="")
+
+
+overlapPeaks$V4 = overlapPeaks$V16
+
+overlapPeaks = overlapPeaks[,c(1:6)]
+
+overlapPeaks_plus = overlapPeaks[which(overlapPeaks$V6 == "+"),]
+overlapPeaks_minus = overlapPeaks[which(overlapPeaks$V6 == "-"),]
+
+
+write.table(overlapPeaks,paste0(BOut, "/coverage/overlappingPeaks_threshold_n100.bed"),sep="\t", quote = F, row.names = F,col.names = F)
+
+write.table(overlapPeaks_plus,paste0(BOut, "/coverage/overlappingPeaks_threshold_n100_plus.bed"),sep="\t", quote = F, row.names = F,col.names = F)
+write.table(overlapPeaks_minus,paste0(BOut, "/coverage/overlappingPeaks_threshold_n100_minus.bed"),sep="\t", quote = F, row.names = F,col.names = F)
+
+

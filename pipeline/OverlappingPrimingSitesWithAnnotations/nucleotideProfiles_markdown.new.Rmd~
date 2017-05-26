@@ -1,0 +1,573 @@
+---
+title: "Untitled"
+author: "Pooja Bhat"
+date: "January 20, 2017"
+output: html_document
+---
+
+
+
+## reading in annotations
+
+## this is used for making nucleotide profiles to differnetiate between false and true positive sites.
+
+```{r}
+library(checkmate)
+library(ggplot2)
+library(checkmate)
+library(Biostrings)
+library(reshape)
+library(GenomicFeatures)
+library(biomaRt)
+library(dplyr)
+#library(tidyr)
+library(tibble)
+```
+##### the functions for this part are sourced from another file (source("/Volumes/groups/bioinfo/shared/Ameres.GRP/incoming/3PrimeEndAnnotation/nucleotideProfiles_revised/OverlappingPrimingSitesWithAnnotations/scripts/overlappingHierarchical.R")). Thre should be 5 functions in this file :
+
+  
+  ## 1. overlapAnnotations - function that takes in the bed file (peakFile) and the annotation. The output of this function is a list, consisting of two data         frames - overlapping and nonOverlapping. 
+  ## 2. 
+
+
+```{r readAnnotations}
+
+source(paste0(PPath, "/OverlappingPrimingSitesWithAnnotations/overlappingHierarchical.R"))
+
+###reading in the annotations
+
+#FIXME no absolute dirs
+utrAnnotation = read.table(paste0(ucscDir, "/processed/refSeq_mrna_utrsPresent.bed"),sep="\t",stringsAsFactors = F)
+ensembl_annotation = read.table(paste0(ensemblDir, "/proteinCoding_annotatedUTRs.bed"),sep="\t",stringsAsFactors = F)
+exonAnnotation = read.table(paste0(ucscDir, "/processed/refSeq_exonAnnotations.bed"),sep="\t",stringsAsFactors = F)
+intronAnnotation = read.table(paste0(ucscDir, "/processed/refSeq_intronAnnotations.bed"),sep="\t",stringsAsFactors = F)
+
+
+##### some checks for the input data : 
+
+assertDataFrame(utrAnnotation,ncol=7,types = c("character","numeric","numeric","character","numeric","character","character"))
+assert_set_equal(length(grep("NM",utrAnnotation$V7)),nrow(utrAnnotation))
+
+assertDataFrame(ensembl_annotation,ncol=7,types = c("character","numeric","numeric","character","numeric","character","character"))
+#assert_set_equal(length(grep("ENSMUST",ensembl_annotation$V7)),nrow(ensembl_annotation))
+
+
+assertDataFrame(exonAnnotation,ncol=7,types = c("character","numeric","numeric","character","numeric","character","character"))
+assert_set_equal(length(grep("NM",exonAnnotation$V7)),nrow(exonAnnotation))
+
+assertDataFrame(intronAnnotation,ncol=7,types = c("character","numeric","numeric","character","numeric","character","character"))
+assert_set_equal(length(grep("NM",intronAnnotation$V7)),nrow(intronAnnotation))
+
+##### remmoving duplicates from annotations : 
+
+
+
+utrAnnotation = removeDuplicates_annotationGene(annotation = utrAnnotation)
+ensembl_annotation = removeDuplicates_annotationGene(annotation = ensembl_annotation)
+intronAnnotation = removeDuplicates_annotationAll(annotation = intronAnnotation)
+exonAnnotation = removeDuplicates_annotationAll(annotation = exonAnnotation)
+
+```
+
+
+
+## reading in the sequenceFile created using sequencesForNucleotideProfile.Rmd
+```{r readPeakFile}
+
+### peaks_bedFile = read.table("/clustertmp/pooja/polyAmapping_allTimepoints/n_100_global_a0/sequences_120nts.bed",sep="\t",stringsAsFactors = F)
+
+peaks_bedFile = read.table(paste0(InPath, "/sequences_120nts.bed"),sep="\t",stringsAsFactors = F)
+
+assertDataFrame(peaks_bedFile,ncol=10,types = c("character","numeric","numeric","character","character","character","character","character","character","numeric"))
+colnames(peaks_bedFile) = c(paste("V",c(1:6),sep=""),"sequences_polyApeaks_120bps","peakName","downstreamSeq","totalAs")
+
+cat("the numebr of peaks that pass the 10 read thresold, with adjacent positions merged are : ",nrow(peaks_bedFile))
+
+
+```
+## now overlapping the annotations and the peaks
+
+```{r}
+
+
+assertFunction(overlapAnnotations)
+#STOPPED here
+
+refSeqOverlapping  = overlapAnnotations(peakFile = peaks_bedFile,annotation = utrAnnotation)
+
+ensemblOverlapping = overlapAnnotations(peakFile = refSeqOverlapping[[2]],annotation = ensembl_annotation)
+
+exonOverlapping = overlapAnnotations(peakFile = ensemblOverlapping[[2]], annotation = exonAnnotation)
+
+intronOverlapping = overlapAnnotations(peakFile = exonOverlapping[[2]], annotation = intronAnnotation)
+
+totalPeaks = nrow(refSeqOverlapping[[1]]) +nrow(ensemblOverlapping[[1]]) + nrow(exonOverlapping[[1]]) + nrow(intronOverlapping[[1]]) + nrow(intronOverlapping[[2]])
+
+assertSetEqual(totalPeaks,nrow(peaks_bedFile))
+
+```
+
+## dividing the peak file by the fraction of A content. this uses the function getPASfractions_thresholded_binned and bins the dataframe produced by overlapping into 9 different categories
+```{r}
+assertFunction(getPASfractions_thresholded_binned)
+
+
+refSeq_divided = getPASfractions_thresholded_binned(QueryData = refSeqOverlapping[[1]])
+ensembl_divided = getPASfractions_thresholded_binned(QueryData = ensemblOverlapping[[1]])
+exon_divided = getPASfractions_thresholded_binned(QueryData = exonOverlapping[[1]])
+intron_divided = getPASfractions_thresholded_binned(QueryData = intronOverlapping[[1]])
+nonOverlapping_divided = getPASfractions_thresholded_binned(QueryData = intronOverlapping[[2]])
+
+
+refSeq_divided_sum = sum(melt(lapply(refSeq_divided,nrow))$value)
+ensembl_divided_sum = sum(melt(lapply(ensembl_divided,nrow))$value)
+intron_divided_sum = sum(melt(lapply(intron_divided,nrow))$value)
+exon_divided_sum = sum(melt(lapply(exon_divided,nrow))$value)
+nonOverlapping_divided_sum = sum(melt(lapply(nonOverlapping_divided,nrow))$value)
+
+
+### checking if the number of 'ends' after dividing into categories is the same. Just a quality control to check if some peaks are not assigned to A categories. 
+
+assertSetEqual(refSeq_divided_sum,nrow(refSeqOverlapping[[1]]))
+assertSetEqual(ensembl_divided_sum,nrow(ensemblOverlapping[[1]]))
+assertSetEqual(intron_divided_sum,nrow(intronOverlapping[[1]]))
+assertSetEqual(exon_divided_sum,nrow(exonOverlapping[[1]]))
+assertSetEqual(nonOverlapping_divided_sum,nrow(intronOverlapping[[2]]))
+
+
+```
+
+## now checking the presence of the PAS motifs
+
+
+```{r}
+assertFunction(checkPAS)
+refSeq_divided_PAS  = lapply(refSeq_divided,function(x) checkPAS(query_threshold = x))
+ensembl_divided_PAS = lapply(ensembl_divided,function(x) checkPAS(query_threshold = x))
+exon_divided_PAS = lapply(exon_divided,function(x) checkPAS(query_threshold = x))
+intron_divided_PAS = lapply(intron_divided,function(x) checkPAS(query_threshold = x))
+nonOverlapping_divided_PAS = lapply(nonOverlapping_divided,function(x) checkPAS(query_threshold = x))
+
+# exons_tmp = exon_divided_PAS$`0.60-0.72`
+# exons_tmp_pas = rbind.data.frame(exons_tmp$AATAAA,exons_tmp$ATTAAA, exons_tmp$APA,stringsAsFactors =F)
+# exons_tpm_nopas =  rbind.data.frame(exons_tmp$noPAS)
+# 
+# exons_tmp_pas =  cbind.data.frame(exons_tmp_pas[,1:7])
+# exons_tpm_nopas = cbind.data.frame(exons_tpm_nopas[,1:7])
+# 
+# write.table(exons_tmp_pas,"/Volumes/clustertmp/pooja/exons_tmp_pas.bed",sep="\t",quote = F,row.names = F,col.names = F)
+# write.table(exons_tpm_nopas,"/Volumes/clustertmp/pooja/exons_tpm_nopas.bed",sep="\t",quote = F,row.names = F,col.names = F)
+
+
+refSeq_divided_PAS_sum = sum(melt(lapply(refSeq_divided_PAS,function(x) lapply(x,function(y) nrow(y))))$value)
+ensembl_divided_PAS_sum = sum(melt(lapply(ensembl_divided_PAS,function(x) lapply(x,function(y) nrow(y))))$value)
+exon_divided_PAS_sum = sum(melt(lapply(exon_divided_PAS,function(x) lapply(x,function(y) nrow(y))))$value)
+intron_divided_PAS_sum = sum(melt(lapply(intron_divided_PAS,function(x) lapply(x,function(y) nrow(y))))$value)
+nonOverlapping_divided_PAS_sum = sum(melt(lapply(nonOverlapping_divided_PAS,function(x) lapply(x,function(y) nrow(y))))$value)
+
+assertSetEqual(refSeq_divided_PAS_sum,nrow(refSeqOverlapping[[1]]))
+assertSetEqual(ensembl_divided_PAS_sum,nrow(ensemblOverlapping[[1]]))
+assertSetEqual(exon_divided_PAS_sum,nrow(exonOverlapping[[1]]))
+assertSetEqual(intron_divided_PAS_sum,nrow(intronOverlapping[[1]]))
+assertSetEqual(nonOverlapping_divided_PAS_sum, nrow(intronOverlapping[[2]]))
+
+
+
+```
+
+## getting the PAS containing and noPAS containing fractions
+```{r}
+
+allOverlaps = list(refSeq_divided_PAS, ensembl_divided_PAS, exon_divided_PAS, intron_divided_PAS,nonOverlapping_divided_PAS) 
+
+names(allOverlaps) = c("refSeq","ensembl","exon","intron","nonOverlapping")
+
+sequences  = lapply(allOverlaps,function(x) lapply(x,function(y) lapply(y,function(z) as.character(z$sequences_polyApeaks_120bps))))
+
+
+sequences_pas = lapply(sequences,function(x) lapply(x, function(y) c(y[[1]],y[[2]],y[[3]])))
+sequences_noPas = lapply(sequences,function(x) lapply(x, function(y) y[[4]]))
+
+
+
+### if there are no entries in any of the sub lists, the lists are removed
+delete.NULLs  <-  function(x.list){   # delele null/empty entries in a list
+  x.list[unlist(lapply(x.list, length) > 1)]
+}
+
+sequences_pas = lapply(sequences_pas,function(x) delete.NULLs(x))
+sequences_noPas = lapply(sequences_noPas,function(x) delete.NULLs(x))
+
+```
+
+
+
+```{r}
+############### to plot nucleotide profiles for UTR overlapping ends  (refSeq and ensembl combined ):
+
+
+
+
+
+#########################
+### combinign the UTR overlapping ends (refSeq + ensembl) that contain a PAS sequence.
+#########################
+
+
+
+sequences_pas_refSeqEnsembl = list(sequences_pas[[1]],sequences_pas[[2]]) #### the dataframes 1 and 2 of the list are the refSeq overlapping and ensembl overlapping peaks.
+
+names(sequences_pas_refSeqEnsembl) = c("refSeq","ensembl")
+sequences_UTRseqs = vector("list",8)
+
+names(sequences_UTRseqs) = names(sequences_pas[[1]])
+for(i in 1:length(sequences_pas_refSeqEnsembl[[1]])){
+  sequences_UTRseqs[[i]] = c(sequences_pas_refSeqEnsembl[[1]][[i]],sequences_pas_refSeqEnsembl[[2]][[i]])
+}
+
+#### we merge the last two categories as there are not enough entries very often in categories >0.96. 
+
+#lastTeoMerged = c(sequences_UTRseqs[[8]],sequences_UTRseqs[[9]])
+
+#sequences_UTRseqs = list(sequences_UTRseqs$`0-0.12`,sequences_UTRseqs$`0.12-0.24`,sequences_UTRseqs$`0.24-0.36`,sequences_UTRseqs$`0.36-0.48`,sequences_UTRseqs$`0.48-0.60`,sequences_UTRseqs$`0.60-0.72`,sequences_UTRseqs$`0.72-0.84`,lastTeoMerged)
+
+names(sequences_UTRseqs) = c(names(sequences_pas[[1]][1:7]),">0.84")
+
+
+################################# the following plots are for PAS containing ends #########################
+
+### plotting each of the categories in a separate plot
+
+
+for(i in 1:length(sequences_UTRseqs)){
+  pdf(paste0(OutPath, "/pasContaining_",names(sequences_UTRseqs)[[i]],".pdf"),height=5,width=10)
+   p = gettingNucleotideComposition_binned(queryData = sequences_UTRseqs[[i]])
+    p = p+ggtitle(paste(names(sequences_UTRseqs)[[i]], " (UTR overlapping, PAS containing)")) +  annotate("text",x=-50,y=50, label= paste("n=",length(sequences_UTRseqs[[i]]))) + ylim(c(-1,100))
+    print(p)
+    cat(i)
+  
+  
+  dev.off()
+}
+
+### plotting all the categories in a one plot
+
+
+pdf(paste0(OutPath, "/pasContaing_UTRoverlapping.pdf"),height=5,width=10)
+  for(i in 1:length(sequences_UTRseqs)){
+    
+    p = gettingNucleotideComposition_binned(queryData = sequences_UTRseqs[[i]])
+    p = p+ggtitle(paste(names(sequences_UTRseqs)[[i]], " (UTR overlapping, PAS containing)")) +  annotate("text",x=-50,y=50, label= paste("n=",length(sequences_UTRseqs[[i]]))) + ylim(c(-1,100))
+    print(p)
+    cat(i)
+  }
+dev.off()
+
+
+####################################################################
+#### same for no PAS containing :
+###################################################################
+
+sequences_Nopas_refSeqEnsembl = list(sequences_noPas[[1]],sequences_noPas[[2]])
+names(sequences_Nopas_refSeqEnsembl) = c("refSeq","ensembl")
+sequences_UTRseqs_noPAS = vector("list",8)
+names(sequences_UTRseqs_noPAS) = names(sequences_noPas[[1]])
+for(i in 1:length(sequences_Nopas_refSeqEnsembl[[1]])){
+  sequences_UTRseqs_noPAS[[i]] = c(sequences_Nopas_refSeqEnsembl[[1]][[i]],sequences_Nopas_refSeqEnsembl[[2]][[i]])
+}
+
+#lastTeoMerged = c(sequences_UTRseqs_noPAS[[8]],sequences_UTRseqs_noPAS[[9]])
+
+#sequences_UTRseqs_noPAS = list(sequences_UTRseqs_noPAS$`0-0.12`,sequences_UTRseqs_noPAS$`0.12-0.24`,sequences_UTRseqs_noPAS$`0.24-0.36`,sequences_UTRseqs_noPAS$`0.36-0.48`,sequences_UTRseqs_noPAS$`0.48-0.60`,sequences_UTRseqs_noPAS$`0.60-0.72`,sequences_UTRseqs_noPAS$`0.72-0.84`,lastTeoMerged)
+
+names(sequences_UTRseqs_noPAS) = c(names(sequences_noPas[[1]][1:7]),">0.84")
+
+
+### plotting each of the categories in a separate plot
+
+
+for(i in 1:length(sequences_UTRseqs_noPAS)){
+  pdf(paste0(OutPath, "/NopasContaining_",names(sequences_UTRseqs)[[i]],".pdf"),height=5,width=10)
+   p = gettingNucleotideComposition_binned(queryData = sequences_UTRseqs_noPAS[[i]])
+    p = p+ggtitle(paste(names(sequences_UTRseqs_noPAS)[[i]], " (UTR overlapping, NoPAS containing)")) +  annotate("text",x=-50,y=50, label= paste("n=",length(sequences_UTRseqs_noPAS[[i]]))) + ylim(c(-1,100))
+    print(p)
+    cat(i)
+  
+  
+  dev.off()
+}
+
+### plotting all the categories in a one plot
+
+
+pdf(paste0(OutPath, "/NoPasContaing_UTRoverlapping.pdf"),height=5,width=10)
+  for(i in 1:length(sequences_UTRseqs_noPAS)){
+    
+    p = gettingNucleotideComposition_binned(queryData = sequences_UTRseqs_noPAS[[i]])
+    p = p+ggtitle(paste(names(sequences_UTRseqs_noPAS)[[i]], "(UTR overlapping, noPAS containing)")) +  annotate("text",x=-50,y=50, label= paste("n=",length(sequences_UTRseqs_noPAS[[i]]))) + ylim(c(-1,100))
+    print(p)
+    cat(i)
+  }
+dev.off()
+
+```
+
+
+### we want to look at ends that overlap with exons as a control.
+```{r}
+### we again plot nucleotide profiles for ends overlapping with exons - PAS containing and noPAS containing 
+
+#### plotting the exon overlaps : 
+
+sequences_exons_pas = sequences_pas$exon
+#sequences_exons_pas_1 = sequences_exons_pas[1:7]
+#sequences_exons_pas_2 = sequences_exons_pas[8:9]
+#sequences_exons_pas_2 = do.call(c,sequences_exons_pas_2)
+#  names(sequences_exons_pas_2) = ">0.84"
+
+#sequences_exons_pas = list(sequences_exons_pas$`0-0.12`,sequences_exons_pas$`0.12-0.24`,sequences_exons_pas$`0.24-0.36`,sequences_exons_pas$`0.36-0.48`,sequences_exons_pas$`0.48-0.60`,sequences_exons_pas$`0.60-0.72`,sequences_exons_pas$`0.72-0.84`,sequences_exons_pas_2)
+
+names(sequences_exons_pas) = c("0-0.12","0.12-0.24","0.24-0.36","0.36-0.48","0.48-0.60","0.60-0.72","0.72-0.84",">0.84")
+for(i in 1:length(sequences_exons_pas)){
+pdf(paste0(OutPath, "/pasContainingExonOverlapping_",names(sequences_exons_pas)[[i]],".pdf"),height=5,width=10)
+p = gettingNucleotideComposition_binned(queryData = sequences_exons_pas[[i]])
+    p = p+ggtitle(paste(names(sequences_exons_pas)[[i]], " (RefSeq exon overlapping, PAS containing)")) +  annotate("text",x=-50,y=50, label= paste("n=",length(sequences_exons_pas[[i]]))) + ylim(c(-1,100))
+    print(p)
+dev.off()
+}
+
+
+#############################
+### same for ends overlapping with exons but not containing a PAS sequence 
+############################
+
+
+sequences_exons_noPAS = sequences_noPas$exon
+#sequences_exons_noPAS_1 = sequences_exons_noPAS[1:7]
+#sequences_exons_noPAS_2 = sequences_exons_noPAS[8:9]
+#sequences_exons_noPAS_2 = do.call(c,sequences_exons_noPAS_2)
+#  names(sequences_exons_noPAS_2) = ">0.84"
+
+#sequences_exons_noPAS = list(sequences_exons_noPAS$`0-0.12`,sequences_exons_noPAS$`0.12-0.24`,sequences_exons_noPAS$`0.24-0.36`,sequences_exons_noPAS$`0.36-0.48`,sequences_exons_noPAS$`0.48-0.60`,sequences_exons_noPAS$`0.60-0.72`,sequences_exons_noPAS$`0.72-0.84`,sequences_exons_noPAS_2)
+
+names(sequences_exons_noPAS) = c("0-0.12","0.12-0.24","0.24-0.36","0.36-0.48","0.48-0.60","0.60-0.72","0.72-0.84",">0.84")
+for(i in 1:length(sequences_exons_noPAS)){
+pdf(paste0(OutPath, "/nopasContainingExonOverlapping_",names(sequences_exons_noPAS)[[i]],".pdf"),height=5,width=10)
+p = gettingNucleotideComposition_binned(queryData = sequences_exons_noPAS[[i]])
+    p = p+ggtitle(paste(names(sequences_exons_noPAS)[[i]], " (RefSeq exon overlapping, no-PAS containing)")) +  annotate("text",x=-50,y=50, label= paste("n=",length(sequences_exons_noPAS[[i]]))) + ylim(c(-1,100))
+    print(p)
+dev.off()
+}
+
+
+```
+
+
+
+## now plotting all categories divided by the A threshold : 
+
+    ### two plots produced : 
+    
+        ## PAS containing 
+        ## noPAS containing
+```{r}
+
+pdf(paste0(OutPath, "/nucleotideComposition_thresholdsbinned_pas_ends","threshold_10_","1_100",".pdf",sep=""),height=5,width=10)
+
+for(i in 1:length(sequences_pas)){
+  for(j in 1:length(sequences_pas[[i]])){
+    
+    p = gettingNucleotideComposition_binned(queryData = sequences_pas[[i]][[j]])
+    p = p+ggtitle(paste(names(sequences_pas[[i]])[[j]],names(sequences_pas)[[i]])) +  annotate("text",x=-50,y=50, label= paste("n=",length(sequences_pas[[i]][[j]]))) + ylim(c(-1,100))
+    print(p)
+    cat(j)
+  }
+  
+}
+
+dev.off()
+
+
+
+
+pdf(paste0(OutPath, "/nucleotideComposition_thresholdsbinned_Nopas_ends","threshold_10_","1_100",".pdf",sep=""),height=5,width=10)
+
+for(i in 1:length(sequences_noPas)){
+  for(j in 1:length(sequences_noPas[[i]])){
+    
+    p =  gettingNucleotideComposition_binned(queryData = sequences_noPas[[i]][[j]])
+    p= p+ ggtitle(paste(names(sequences_noPas[[i]])[[j]],names(sequences_noPas)[[i]])) +  annotate("text",x=-50,y=50, label= paste("n=",length(sequences_noPas[[i]][[j]]))) + ylim(c(-1,100))
+    print(p)
+    cat(j)
+  }
+  
+}
+dev.off()
+
+
+
+
+
+
+
+```
+## looking at the nucleotide profiles that are below and above the threshold that we define for the fraction of As contained- <0.24 for noPAS containing and <0.36 for PAS containing.
+
+```{r}
+
+
+pdf(paste0(OutPath, "/belowAboveThreshold.pdf"),height=5,width=10)
+refSeqEnsembl_pas = list(sequences_pas$refSeq, sequences_pas$ensembl)
+names(refSeqEnsembl_pas) = c("refSeq","ensembl")
+
+refSeqEnsembl_accepted = lapply(refSeqEnsembl_pas,function(x) x[c(1:3)]) ### 0 - 0.12, 0.12-0.24, 0.24 -0.36
+refSeqEnsembl_accepted = lapply(refSeqEnsembl_accepted,function(x) do.call(c,x))
+refSeqEnsembl_accepted = do.call(c,refSeqEnsembl_accepted)
+names(refSeqEnsembl_accepted) = NULL
+
+
+p =  gettingNucleotideComposition_binned(queryData = refSeqEnsembl_accepted)
+p= p+ ggtitle("accepted and UTR Overlapping peaks PAS") +  annotate("text",x=-50,y=50, label= paste("n=",length(refSeqEnsembl_accepted))) + ylim(c(-1,100))
+print(p)
+
+### getting the nonAccepted peaks 
+
+refSeqEnsembl_nonaccepted = lapply(refSeqEnsembl_pas,function(x) x[c(4:8)]) ### non accepted cayegries >=0.36 A threshold
+refSeqEnsembl_nonaccepted = lapply(refSeqEnsembl_nonaccepted,function(x) do.call(c,x))
+refSeqEnsembl_nonaccepted = do.call(c,refSeqEnsembl_nonaccepted)
+names(refSeqEnsembl_nonaccepted) = NULL
+
+p =  gettingNucleotideComposition_binned(queryData = refSeqEnsembl_nonaccepted)
+p= p+ ggtitle("non-accepted and UTR Overlapping peaks PAS") +  annotate("text",x=-50,y=50, label= paste("n=",length(refSeqEnsembl_nonaccepted))) + ylim(c(-1,100))
+print(p)
+
+#### now looking at the no PAS containing peaks :
+
+refSeqEnsembl_nopas = list(sequences_noPas$refSeq, sequences_noPas$ensembl)
+names(refSeqEnsembl_nopas) = c("refSeq","ensembl")
+
+refSeqEnsembl_noPas_accepted = lapply(refSeqEnsembl_nopas,function(x) x[c(1:2)]) #### noPAS containing : categories that pass the threshold = 0-0.12, 0.12-0.24
+refSeqEnsembl_noPas_accepted = lapply(refSeqEnsembl_noPas_accepted,function(x) do.call(c,x))
+refSeqEnsembl_noPas_accepted = do.call(c,refSeqEnsembl_noPas_accepted)
+names(refSeqEnsembl_noPas_accepted) = NULL
+
+p =  gettingNucleotideComposition_binned(queryData = refSeqEnsembl_noPas_accepted)
+p= p+ ggtitle("accepted and UTR Overlapping peaks noPAS") +  annotate("text",x=-50,y=50, label= paste("n=",length(refSeqEnsembl_noPas_accepted))) + ylim(c(-1,100))
+print(p)
+
+refSeqEnsembl_noPas_nonaccepted = lapply(refSeqEnsembl_nopas,function(x) x[c(3:8)])#### noPAS containing : categories that do not pass the A threshold i.e > 0.24
+refSeqEnsembl_noPas_nonaccepted = lapply(refSeqEnsembl_noPas_nonaccepted,function(x) do.call(c,x))
+refSeqEnsembl_noPas_nonaccepted = do.call(c,refSeqEnsembl_noPas_nonaccepted)
+names(refSeqEnsembl_noPas_nonaccepted) = NULL
+
+p =  gettingNucleotideComposition_binned(queryData = refSeqEnsembl_noPas_nonaccepted)
+p= p+ ggtitle("non accepted and UTR Overlapping peaks noPAS") +  annotate("text",x=-50,y=50, label= paste("n=",length(refSeqEnsembl_noPas_nonaccepted))) + ylim(c(-1,100))
+print(p)
+
+dev.off()
+
+
+### plotting all accetped and all rejected together : 1. PAS and noPAS accepted 2. PAS+noPAS rejected
+
+
+allAccapted = c(refSeqEnsembl_accepted,refSeqEnsembl_noPas_accepted)
+allRejected = c(refSeqEnsembl_nonaccepted,refSeqEnsembl_noPas_nonaccepted)
+pdf(paste0(OutPath, "/allAccepted_overlappingWithUTRs.pdf"),height=5,width =10)
+p =  gettingNucleotideComposition_binned(queryData = allAccapted)
+p= p+ ggtitle("UTR overlapping + accepted") +  annotate("text",x=-50,y=50, label= paste("n=",length(allAccapted))) + ylim(c(-1,100))
+print(p)
+dev.off()
+
+pdf(paste0(OutPath, "/allRejected_overlappingWithUTRs.pdf"),height=5,width =10)
+p =  gettingNucleotideComposition_binned(queryData = allRejected)
+p= p+ ggtitle("UTR overlapping + Non accepted") +  annotate("text",x=-50,y=50, label= paste("n=",length(allRejected))) + ylim(c(-1,100))
+print(p)
+
+
+dev.off()
+
+```
+
+
+
+### writing some data frames 
+```{r}
+
+write.table(refSeqOverlapping[[1]],paste0(InPath, "/refSeq_overlapping.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+write.table(ensemblOverlapping[[1]],paste0(InPath, "/ensembl_overlapping.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+
+refSeq_total = lapply(refSeq_divided_PAS,function(x) do.call(rbind.data.frame,x))
+refSeq_total = do.call(rbind.data.frame,refSeq_total)
+refSeq_total$peakClassification = row.names(refSeq_total)
+
+write.table(refSeq_total,paste0(InPath, "/refSeq_total.bed"),sep="\t",quote = F,row.names = F,col.names = F) 
+
+
+ensembl_total = lapply(ensembl_divided_PAS,function(x) do.call(rbind.data.frame,x))
+ensembl_total = do.call(rbind.data.frame,ensembl_total)
+ensembl_total$peakClassification = row.names(ensembl_total)
+write.table(ensembl_total,paste0(InPath, "/ensembl_total.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+
+
+
+nonOverlapping_total = lapply(nonOverlapping_divided_PAS,function(x) do.call(rbind.data.frame,x))
+nonOverlapping_total = do.call(rbind.data.frame,nonOverlapping_total)  
+nonOverlapping_total$peakClassification = row.names(nonOverlapping_total)
+
+write.table(nonOverlapping_total,paste0(InPath, "/nonOverlapping_total.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+
+### reporting the number of ends overlapping in each category 
+
+
+
+refSeq_details = melt(lapply(refSeq_divided_PAS,function(x) lapply(x,function(y) nrow(y))))
+ensembl_details = melt(lapply(ensembl_divided_PAS,function(x) lapply(x,function(y) nrow(y))))
+exon_details = melt(lapply(exon_divided_PAS,function(x) lapply(x,function(y) nrow(y))))
+intron_details = melt(lapply(intron_divided_PAS,function(x) lapply(x,function(y) nrow(y))))
+nonOverlapping_details = melt(lapply(nonOverlapping_divided_PAS,function(x) lapply(x,function(y) nrow(y))))
+
+totalDivisions  = merge(refSeq_details, ensembl_details, by = c("L1", "L2"), all = TRUE)
+totalDivisions  = merge(totalDivisions, exon_details, by = c("L1", "L2"), all = TRUE)
+totalDivisions  = merge(totalDivisions, intron_details, by = c("L1", "L2"), all = TRUE)
+totalDivisions  = merge(totalDivisions, nonOverlapping_details, by = c("L1", "L2"), all = TRUE)
+colnames(totalDivisions) = c("Acontent", "PASsite","refSeqOverlappers","ensemblOverlappers","exonOverlappers","intronOverlappers","nonOverlapping")
+
+write.table(totalDivisions,paste0(InPath, "/differetCategories_nucleotideProfiles.txt"),sep="\t",row.names = T,col.names = T)
+
+
+
+```
+##################### THE following chunk is crashing ###############################################
+```{r someStats}
+
+########## calculatting the statistics of the number of 'read ends' recoverd overlapping with each annotation.  SUPER SLOW AND CRASHING.
+
+sum_refSeq = sum(as.numeric(unlist(strsplit(refSeqOverlapping[[1]]$V5,split = ",",fixed = T))))
+sum_ensembl = sum(as.numeric(unlist(strsplit(ensemblOverlapping[[1]]$V5,split = ",",fixed = T))))
+sum_exons = sum(as.numeric(unlist(strsplit(exonOverlapping[[1]]$V5,split = ",",fixed = T))))
+sum_introns = sum(as.numeric(unlist(strsplit(intronOverlapping[[1]]$V5,split = ",",fixed = T))))
+sum_nonoverlapping = sum(as.numeric(unlist(strsplit(intronOverlapping[[2]]$V5,split = ",",fixed = T))))
+
+
+
+
+total = sum (sum_introns,sum_ensembl,sum_refSeq,sum_exons,sum_nonoverlapping)
+
+fraction_refSeq = sum_refSeq/total
+fraction_ensembl = sum_ensembl/total
+fraction_introns = sum_introns/total
+fraction_exons = sum_exons/total
+fraction_intergenic = sum_nonoverlapping/total
+
+
+
+
+fractionOfreads  = cbind.data.frame(c(fraction_refSeq,fraction_ensembl,fraction_exons,fraction_introns,fraction_intergenic),c(nrow(refSeqOverlapping[[1]])/totalPeaks,nrow(ensemblOverlapping[[1]])/totalPeaks,nrow(exonOverlapping[[1]])/totalPeaks ,nrow(intronOverlapping[[1]])/totalPeaks , nrow(intronOverlapping[[2]])/totalPeaks),c("fraction_refSeq","fraction_ensembl","fraction_exons","fraction_introns","fraction_intergenic"))
+
+colnames(fractionOfreads) = c("fractionOfReads","fractionOfPeaks", "category")
+write.table(fractionOfreads,paste0(InPath, "/nucleotideOverlap_summarry.txt"),sep="\t",quote=F,col.names=)
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

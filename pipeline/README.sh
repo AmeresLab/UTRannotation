@@ -1,0 +1,146 @@
+for CELLLINE in "mESC" "MEF" "hESC" "Hela"; do
+
+    PIPELINE="/groups/bioinfo/shared/Ameres.GRP/Veronika.Herzog/SLAMannotation/pipeline/"
+    ANNOBASE="/groups/bioinfo/shared/Ameres.GRP/Veronika.Herzog/SLAMannotation/annotation/"
+    GBASE="/groups/bioinfo/shared/Ameres.GRP/Veronika.Herzog/SLAMannotation/references/"
+
+    if [ $CELLLINE = "mESC" ]; then
+	BIN="/groups/bioinfo/shared/Ameres.GRP/Veronika.Herzog/SLAMannotation/$CELLLINE/input"
+	GBUILD="mm10"
+	GET_ANNOTATION="FALSE"
+	BOUT="/clustertmp/bioinfo/thomas/SLAMannotation/$CELLLINE/output"
+    else if [ $CELLLINE = "MEF" ]; then
+	     BIN="/groups/bioinfo/shared/Ameres.GRP/Veronika.Herzog/SLAMannotation/$CELLLINE/input"
+	     GBUILD="mm10"
+	     GET_ANNOTATION="FALSE"
+	     BOUT="/clustertmp/bioinfo/thomas/SLAMannotation/$CELLLINE/output"
+	 else if [ $CELLLINE = "hESC" ]; then
+		  BIN="/groups/bioinfo/shared/Ameres.GRP/Veronika.Herzog/SLAMannotation/$CELLLINE/input"
+		  GBUILD="hg38"
+		  GET_ANNOTATION="FALSE"
+		  BOUT="/clustertmp/bioinfo/thomas/SLAMannotation/$CELLLINE/output"
+	      else if [ $CELLLINE = "Hela" ]; then
+		       BIN="/groups/bioinfo/shared/Ameres.GRP/Veronika.Herzog/SLAMannotation/$CELLLINE/input"
+		       GBUILD="hg38"
+		       GET_ANNOTATION="FALSE"
+		       BOUT="/clustertmp/bioinfo/thomas/SLAMannotation/$CELLLINE/output"
+		   fi
+	      fi
+	 fi
+    fi
+
+    mkdir -p $BOUT
+
+
+#download UCSC annotation as in /groups/bioinfo/shared/Ameres.GRP/incoming/3PrimeEndAnnotation/annotations_mm10/gettingAnnotations.txt
+    if [ $GBUILD = "mm10" ]; then
+
+	ENSEMBL="$ANNOBASE/$GBUILD/ensembl_mm10_Ensembl_Genes_87_06-march-2017/"
+	UCSC="$ANNOBASE/$GBUILD/refSeq_mm10_GRCm38_06-march-2017/"
+	GENOME="$GBASE/mmu_mm10_whole_genome.fa"
+    
+	if [ $GET_ANNOTATION = "TRUE" ]; then
+	    rmd="$ANNOBASE/$GBUILD/getAnnotations.Rmd"
+	    mkdir -p $ENSEMBL
+	    mkdir -p $UCSC/processed
+	    Rscript --slave -e "ucscDir='$UCSC'; ensemblDir='$ENSEMBL';rmarkdown::render('$rmd', output_file='$ANNOBASE/$GBUILD/getAnnotations.html')"
+	fi
+
+    else if [ $GBUILD = "hg38" ]; then
+
+	     ENSEMBL="$ANNOBASE/$GBUILD/ensembl_hg38_Ensembl_Genes_88/"
+	     UCSC="$ANNOBASE/$GBUILD/refSeq_hg38_GRCh38_20170418/"
+	     GENOME="$GBASE/GRCh38.p7.major.fa"
+    
+	     if [ $GET_ANNOTATION = "TRUE" ]; then
+		 rmd="$ANNOBASE/$GBUILD/getAnnotations.Rmd"
+		 mkdir -p $ENSEMBL
+		 mkdir -p $UCSC/processed
+		 Rscript --slave -e "ucscDir='$UCSC'; ensemblDir='$ENSEMBL';rmarkdown::render('$rmd', output_file='$ANNOBASE/$GBUILD/getAnnotations.html')"
+	     fi
+	 fi
+    fi
+
+
+
+#Raw fastq.gz; Preprocess/map/postprocess
+    QUANT=$BIN/quantseq
+    QUANT_ALIGN=$BOUT/polyAmapping_allTimepoints
+    mkdir $QUANT_ALIGN
+    cd $QUANT_ALIGN
+
+    ls $QUANT/*.fq.gz | perl -pe "s#$QUANT/##" > $QUANT_ALIGN/sampleInfo.txt
+    TASKS=`wc -l $QUANT_ALIGN/sampleInfo.txt | awk '{print $1}'`
+
+    export PIPELINE
+    export QUANT
+    export QUANT_ALIGN
+    export GENOME
+
+    qsub -sync y -t 1:$TASKS $PIPELINE/pre-processing/beforeMapping.new.sh
+    qsub -sync y -t 1:$TASKS $PIPELINE/primingSites/mapping_n100_global.sh
+    qsub -sync y $PIPELINE/primingSites/afterMapping.sh
+
+#cd n_100_global_a0
+#samtools merge merged.bam *filtered.bam
+#samtools index merged.bam
+#cd ..
+#source $PIPELINE/mapAllReads.sh
+#cd allReads
+#samtools merge merged.bam *filtered.bam
+#samtools index merged.bam
+#cd ..
+
+    mkdir logs
+    mv *.sh.* logs
+    mv map.[eop]* logs
+    mv cutadapt.[eo]* logs
+
+    cd $BOUT
+
+#extract +1 to +20 A fraction
+    module unload R
+    module load R/3.3.0
+    rmd="$PIPELINE/OverlappingPrimingSitesWithAnnotations/sequencesForNucleotideProfile.Rmd"
+    INPUT=$QUANT_ALIGN/n_100_global_a0/
+    Rscript --slave -e "InPath='$INPUT';set.seed(100);rmarkdown::render('$rmd', output_file='$INPUT/sequencesForNucleotideProfile.html')"
+
+
+    mkdir -p $BOUT/PASplot
+    OUTPUT=$BOUT/PASplot
+    rmd="$PIPELINE/OverlappingPrimingSitesWithAnnotations/nucleotideProfiles_markdown.new.Rmd"
+
+    Rscript --slave -e "PPath='$PIPELINE'; InPath='$INPUT'; OutPath='$OUTPUT'; ucscDir='$UCSC'; ensemblDir='$ENSEMBL';rmarkdown::render('$rmd', output_file='$OUTPUT/nucleotideProfiles_markdown.new.html')"
+
+
+    OUTPUT=$BOUT/intergenicPeaks
+    mkdir -p $OUTPUT
+
+    rmd="$PIPELINE/intergenicPeaks/getLongestUTR.Rmd"
+    Rscript --slave -e "PPath='$PIPELINE'; InPath='$INPUT'; OutPath='$OUTPUT'; ucscDir='$UCSC'; ensemblDir='$ENSEMBL';rmarkdown::render('$rmd', output_file='$BOUT/getLongestUTR.html')"
+
+
+    source $PIPELINE/intergenicPeaks/getClosestGene.sh
+
+
+
+#make sure reads are on opposite strand "-S" !!!
+    mkdir $BOUT/ExtendingINtergenicRegions
+    mkdir $BOUT/coverage
+    Rscript --vanilla -e "BIn='$BIN'; BOut='$BOUT'; ucscDir='$UCSC'; ensemblDir='$ENSEMBL'; source('$PIPELINE/intergenicPeaks/addingIntergenicPeaks.R')"
+    
+
+    rmd="$PIPELINE/90PercentFiltering_merging_countingWindows/assignToUTRs.Rmd"
+    Rscript --slave -e "BIn='$BIN'; BOut='$BOUT'; ucscDir='$UCSC'; ensemblDir='$ENSEMBL';rmarkdown::render('$rmd', output_file='$BOUT/assignToUTRs.html')"
+
+    rmd="$PIPELINE/90PercentFiltering_merging_countingWindows/90PercentFiltering.Rmd"
+    Rscript --slave -e "BIn='$BIN'; BOut='$BOUT'; ucscDir='$UCSC'; ensemblDir='$ENSEMBL';rmarkdown::render('$rmd', output_file='$BOUT/90PercentFiltering.html')"
+
+    Rscript --vanilla -e "BIn='$BIN'; BOut='$BOUT'; ucscDir='$UCSC'; ensemblDir='$ENSEMBL'; fai='$GENOME.fai'; source('$PIPELINE/90PercentFiltering_merging_countingWindows/mergingCounting.new.R')"
+
+    find $BOUT* | egrep ".bed$" | egrep -v "final90percent" | xargs -P 1 gzip
+
+    mkdir $BIN/../output/new
+    rsync -rva  --exclude "*.bam" --exclude "*.fastq" --exclude "*.fq" $BOUT/* $BIN/../output/new
+
+done
