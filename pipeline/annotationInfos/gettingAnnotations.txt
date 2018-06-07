@@ -1,0 +1,102 @@
+#################################################
+for 3' UTR annotations from UCSC genome browser (refSeq_mm10_3primeUTR.bed)
+#################################################
+
+	1. Form UCSC table browser, select:
+		a. clade = mammal 
+		b. genome = mouse
+		c. assembly = Dec. 2011 (GRCm38/mm10)
+		d. group = genes and gene prediction
+		e. track = refSeq genes
+		f. table = refGene
+	2. select bed format and 3' UTR. 
+	
+################################################	
+for intron annotations from UCSC table browser (refSeq_mm10_intronAnnotations.bed)
+################################################
+
+	1. Form UCSC table browser, select:
+		a. clade = mammal 
+		b. genome = mouse
+		c. assembly = Dec. 2011 (GRCm38/mm10)
+		d. group = genes and gene prediction
+		e. track = refSeq genes
+		f. table = refGene
+	2. select bed format and intron. 
+
+#################################################	
+for exon annotations from UCSC table browser (refSeq_mm10_exonAnnotations.bed)
+#################################################
+	
+	1. Form UCSC table browser, select:
+		a. clade = mammal 
+		b. genome = mouse
+		c. assembly = Dec. 2011 (GRCm38/mm10)
+		d. group = genes and gene prediction
+		e. track = refSeq genes
+		f. table = refGene
+	2. select bed format and exon. 
+	
+	
+	
+##################################################
+refFlat annotations from the UCSC genome browser 
+##################################################
+	
+	1. Form UCSC table browser, select:
+		a. clade = mammal 
+		b. genome = mouse
+		c. assembly = Dec. 2011 (GRCm38/mm10)
+		d. group = genes and gene prediction
+		e. track = refSeq genes
+		f. table = refFlat
+	2. select bed format and 3' UTR. 
+	
+
+###################################################
+
+
+################## further processing ###############
+
+### further processing has been done in the script : getAnnotations.Rmd
+
+###########refSeq annotations##########
+
+	1. assign gene names of refSeq annotations from refFlat annotations - this is done based on the chromosome, start and end positions, only retain annotations of main chromosomes (1:19,X,y)
+	2. separate refSeq mRNA annotations (id : "NM...") and non-coding RNA annotations (id : NR...) - refSeq_mrna_utrsPresent.txt,  refSeq_ncrna_utrsPresent.txt
+	3. Get the transcript annotations and check which transcripts do not have an annotated 3' UTR. - refSeqGenesWithoutUTRs.txt
+	
+		
+###### refSeq exon and intron annotations #######
+
+
+	1. mRNAs are selected for, based on NM ids.
+	2. only main chromosomes are retained (chr1:19,X,Y)
+
+
+
+
+
+
+ENSEMBL annotations. 
+
+Ensembl annotations were retrieved from biomart, using RStudio. 
+
+The following was retrieved using biomart from Ensembl Genes 87. 
+chromosome_name, 3_utr_start, 3_utr_end, strand, ensembl_gene_id, ensembl_transcript_id, external_gene_name, gene_biotype, transcript_biotype
+
+######## processing ensembl annotations ###########
+
+All te files can be found in : smb://storage.imp.ac.at/groups/bioinfo/shared/Ameres.GRP/incoming/3PrimeEndAnnotation/annotations_mm10/ensembl_mm10_Ensembl_Genes_87
+
+
+	1. get only protein coding genes based on transcript biotype : allTranscripts_proteinCoding.txt
+	only the main chromosomes are retained.
+	2. get protein coding genes with annotated 3' UTRs : proteinCoding_annotatedUTRs.txt
+	3. protein coding genes with un annotated 3' UTRs : proteinCoding_UnannotatedUTRs.txt
+	
+####### each of these files have been rearranged in order to have the bed format. 	
+		
+
+	
+

@@ -1,0 +1,286 @@
+---
+title: "annotations_3primeEnds"
+author: "Pooja Bhat"
+date: "March 6, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### this is a script that can be used to prepare the refSeq and ENSEMBL annotations for overlapping with identified priming sites. 
+
+## this script contains processing for ensembl annotations - 3' UTR's (protein coding genes), transcript annotations, exon annotations, intron annotations
+
+```{r loadingPackages}
+
+
+library(checkmate)
+library(GenomicFeatures)
+library(biomaRt)
+
+
+
+```
+
+```{r loadingBiomart}
+
+listMarts(host = "www.ensembl.org")
+
+ensembl  = useMart(biomart = "ENSEMBL_MART_ENSEMBL",dataset="mmusculus_gene_ensembl",host="www.ensembl.org")
+
+```
+
+```{r ncRNA list}
+ncRNAinfo = getBM(attributes = c("refseq_ncrna","transcript_biotype"),mart = ensembl)
+write.table(ncRNAinfo,paste0(ensemblDir, "/ncRNA.orig.txt"),sep="\t",quote = F,col.names = T,row.names = F)
+
+validBiotype <- c("antisense", "bidirectional_promoter_lncRNA", "lincRNA", "macro_lncRNA", "processed_transcript", "sense_intronic", "sense_overlapping")
+ncRNAinfo <- ncRNAinfo[is.element(ncRNAinfo[,2], validBiotype), ]
+ncRNAinfo <- ncRNAinfo[grep("NR_", ncRNAinfo[,1]),]
+write.table(ncRNAinfo,paste0(ensemblDir, "/ncRNA_refSeq.txt"),sep="\t",quote = F,col.names = T,row.names = F)
+
+```
+
+```{r 3primeUTRs}
+
+UTRinfo = getBM(attributes = c("chromosome_name","3_utr_start","3_utr_end","strand","ensembl_gene_id","ensembl_transcript_id","external_gene_name","gene_biotype","transcript_biotype"),mart = ensembl)
+
+#### separating these into genes that contain 3' UTRs and genes for which 3' UTRs are not present
+
+#Biomart 1-based => convert 0/1-based (https://www.biostars.org/p/7104/
+UTRinfo[,"3_utr_start"] <- as.numeric(as.character(UTRinfo[,"3_utr_start"])) - 1
+                              
+
+write.table(UTRinfo,paste0(ensemblDir, "/allTranscripts.orig.txt"),sep="\t",quote = F,col.names = T,row.names = F)
+
+# major chr
+chromosomes_mm = c(1:19,"X","Y")
+
+UTRinfo = UTRinfo[is.element(UTRinfo$chromosome_name, chromosomes_mm),]
+UTRinfo$chromosome_name = paste("chr",UTRinfo$chromosome_name,sep="")
+## also changing the strand conventions : 
+
+UTRinfo$strand[which(UTRinfo$strand == "1")] = "+"
+UTRinfo$strand[which(UTRinfo$strand == "-1")] = "-"
+
+write.table(UTRinfo,paste0(ensemblDir, "/allTranscripts.txt"),sep="\t",quote = F,col.names = T,row.names = F)
+
+
+UTRinfo_rearranged = cbind.data.frame(UTRinfo$chromosome_name,UTRinfo$`3_utr_start`,UTRinfo$`3_utr_end`, UTRinfo$external_gene_name, 0, UTRinfo$strand, UTRinfo$ensembl_transcript_id,stringsAsFactors=F) 
+write.table(UTRinfo_rearranged,paste0(ensemblDir, "allTranscripts.bed"),quote=F,row.names = F,col.names = F,sep="\t")
+
+###### keep only the main chromosomes, remove MT and unchr chromsomes : 
+
+#### only getting protein coding transcripts :
+
+
+UTRinfo_proteinCoding = UTRinfo[which(UTRinfo$transcript_biotype == "protein_coding"),]
+write.table(UTRinfo_proteinCoding,paste0(ensemblDir, "/allTranscripts_proteinCoding.txt"),sep="\t",quote = F,col.names = T,row.names = F)
+
+
+### rearranging this to a bed file : 
+
+UTRinfo_proteinCoding_rearranged = cbind.data.frame(UTRinfo_proteinCoding$chromosome_name, UTRinfo_proteinCoding$`3_utr_start`,UTRinfo_proteinCoding$`3_utr_end`,UTRinfo_proteinCoding$external_gene_name,0,UTRinfo_proteinCoding$strand,UTRinfo_proteinCoding$ensembl_transcript_id,stringsAsFactors=F)
+
+write.table(UTRinfo_proteinCoding_rearranged,paste0(ensemblDir, "/allTranscripts_proteinCoding.txt"),sep="\t",quote = F,col.names = F,row.names = F)
+
+
+### subsetting again protein coding transcripts that have UTRs annotated. 
+
+UTRinfo_proteinCoding_UTRsannotated = UTRinfo_proteinCoding[complete.cases(UTRinfo_proteinCoding),]
+
+UTRinfo_proteinCoding_UTRsUnAnnotated = UTRinfo_proteinCoding[!complete.cases(UTRinfo_proteinCoding),]
+
+
+write.table(UTRinfo_proteinCoding_UTRsannotated,paste0(ensemblDir, "/proteinCoding_annotatedUTRs.txt"),sep="\t",row.names = F,col.names = T,quote = F)
+
+write.table(UTRinfo_proteinCoding_UTRsUnAnnotated,paste0(ensemblDir, "/proteinCoding_UnannotatedUTRs.txt"),sep="\t",row.names = F,col.names = T,quote = F)
+
+### rearranging the above files to bed files : 
+UTRinfo_proteinCoding_UTRsannotated_rearranged = cbind.data.frame(UTRinfo_proteinCoding_UTRsannotated$chromosome_name, UTRinfo_proteinCoding_UTRsannotated$`3_utr_start`,UTRinfo_proteinCoding_UTRsannotated$`3_utr_end`,UTRinfo_proteinCoding_UTRsannotated$external_gene_name,0,UTRinfo_proteinCoding_UTRsannotated$strand,UTRinfo_proteinCoding_UTRsannotated$ensembl_transcript_id)
+
+write.table(UTRinfo_proteinCoding_UTRsannotated_rearranged,paste0(ensemblDir, "/proteinCoding_annotatedUTRs.bed"),sep="\t",row.names = F,col.names = F,quote = F)
+
+UTRinfo_proteinCoding_UTRsUnAnnotated_rearranged = cbind.data.frame(UTRinfo_proteinCoding_UTRsUnAnnotated$chromosome_name, UTRinfo_proteinCoding_UTRsUnAnnotated$`3_utr_start`,UTRinfo_proteinCoding_UTRsUnAnnotated$`3_utr_end`,UTRinfo_proteinCoding_UTRsUnAnnotated$external_gene_name,0,UTRinfo_proteinCoding_UTRsUnAnnotated$strand,UTRinfo_proteinCoding_UTRsUnAnnotated$ensembl_transcript_id)
+
+write.table(UTRinfo_proteinCoding_UTRsUnAnnotated_rearranged,paste0(ensemblDir, "/proteinCoding_UnannotatedUTRs.bed"),sep="\t",row.names = F,col.names = F,quote = F)
+
+
+```
+
+
+```{r ensemblTranscriptInfo}
+
+transcriptinfo = getBM(attributes = c("chromosome_name","transcript_start","transcript_end","strand","ensembl_gene_id","ensembl_transcript_id","external_gene_name","gene_biotype","transcript_biotype"),mart = ensembl)
+write.table(transcriptinfo,paste0(ensemblDir, "/transcriptStartsAndEnds_all.orig.txt"),sep="\t",col.names = T,row.names = F,quote = F)
+
+#Biomart 1-based => convert 0/1-based (https://www.biostars.org/p/7104/
+transcriptinfo$transcript_start <- as.numeric(as.character(transcriptinfo$transcript_start)) - 1
+
+
+# major chr
+chromosomes_mm = c(1:19,"X","Y")
+
+transcriptinfo = transcriptinfo[is.element(transcriptinfo$chromosome_name, chromosomes_mm),]
+transcriptinfo$chromosome_name = paste("chr",transcriptinfo$chromosome_name,sep="")
+## also changing the strand conventions : 
+
+transcriptinfo$strand[which(transcriptinfo$strand == "1")] = "+"
+transcriptinfo$strand[which(transcriptinfo$strand == "-1")] = "-"
+
+# contains miRNA, snRNA, ...
+write.table(transcriptinfo,paste0(ensemblDir, "/transcriptStartsAndEnds_all.txt"),sep="\t",col.names = T,row.names = F,quote = F)
+
+#FIXME
+validBiotype <- c("protein_coding", "")
+transcriptinfo = transcriptinfo[is.element(transcriptinfo$transcript_biotype, validBiotype),]
+write.table(transcriptinfo,paste0(ensemblDir, "/transcriptStartsAndEnds_all.polyABiotype.txt"),sep="\t",col.names = T,row.names = F,quote = F)
+```
+
+```{r ensemblExonInfo}
+
+exoninfo = getBM(attributes = c("chromosome_name","exon_chrom_start","exon_chrom_end","strand","ensembl_gene_id","ensembl_transcript_id","external_gene_name","gene_biotype","transcript_biotype"),mart = ensembl)
+nrow(exoninfo)
+
+write.table(exoninfo,paste0(ensemblDir, "/exonStartsAndEnds_all.orig.txt"),sep="\t",col.names = T,row.names = F,quote = F)
+
+#Biomart 1-based => convert 0/1-based (https://www.biostars.org/p/7104/
+exoninfo$exon_chrom__start <- as.numeric(as.character(exoninfo$exon_chrom_start)) - 1
+
+
+# major chr
+chromosomes_mm = c(1:19,"X","Y")
+
+exoninfo = exoninfo[is.element(exoninfo$chromosome_name, chromosomes_mm),]
+exoninfo$chromosome_name = paste("chr",exoninfo$chromosome_name,sep="")
+## also changing the strand conventions : 
+
+exoninfo$strand[which(exoninfo$strand == "1")] = "+"
+exoninfo$strand[which(exoninfo$strand == "-1")] = "-"
+
+# contains miRNA, snRNA, ...
+write.table(exoninfo,paste0(ensemblDir, "/exonStartsAndEnds_all.txt"),sep="\t",col.names = T,row.names = F,quote = F)
+
+```
+
+
+##### checking protein coding genes from refSeq annotations : 
+
+
+```{r combingingRefSeqannotationsWithBiotype}
+
+refSeq_3primeAnnotation = read.table(paste0(ucscDir, "refSeq_mm10_3primeUTR.bed"),stringsAsFactors = F)
+
+refFlat = read.table(paste0(ucscDir, "/refSeq_refFlat_utrAnnotations"),stringsAsFactors = F)
+
+### splitting the name of refSeq 3' annotation 
+
+refSeq_names = strsplit(refSeq_3primeAnnotation$V4,split = "_",fixed = T)
+refSeq_names_combined = unlist(lapply(refSeq_names,function(x) paste(x[1],x[2],sep = "_")))
+refSeq_3primeAnnotation$refSeqTranscriptName = refSeq_names_combined
+
+#### splitting the names of refFlat annotations 
+
+refSeq_geneNames = strsplit(refFlat$V4,split = "_",fixed = T)
+refSeq_geneNames_combined = unlist(lapply(refSeq_geneNames,function(x) paste(x[1],sep = "_")))
+refFlat$refSeqTranscriptName = refSeq_geneNames_combined
+
+refSeq_3primeAnnotation$id = paste(refSeq_3primeAnnotation$V1,refSeq_3primeAnnotation$V2,refSeq_3primeAnnotation$V3,sep="_")
+refFlat$id = paste(refFlat$V1,refFlat$V2,refFlat$V3,sep="_")
+
+
+refFlat  = refFlat[match( refSeq_3primeAnnotation$id,refFlat$id),] #### matching ids based on the chromosome start and end positions. ##### THERE IS PROBABLY A BETTER WAY TO DO THIS####
+
+refSeq_3primeAnnotation$geneName = refFlat$refSeqTranscriptName
+
+#major chr
+chromosomes_mm = paste("chr",c(1:19,"X","Y"),sep="")
+refSeq_3primeAnnotation = refSeq_3primeAnnotation[is.element(refSeq_3primeAnnotation$V1, chromosomes_mm),]
+
+###### 
+
+refSeq_mrna =refSeq_3primeAnnotation[grep("NM",refSeq_3primeAnnotation$refSeqTranscriptName),]
+refSeq_ncna = refSeq_3primeAnnotation[grep("NR",refSeq_3primeAnnotation$refSeqTranscriptName),]
+
+
+write.table(refSeq_mrna,paste0(ucscDir, "/processed/refSeq_mrna_utrsPresent.txt"),sep="\t",quote = F,row.names = F)
+
+write.table(refSeq_ncna,paste0(ucscDir, "/processed/refSeq_ncrna_utrsPresent.txt"),sep="\t",quote = F,row.names = F)
+
+
+### rearranging this : 
+
+refSeq_mrna_rearranged = cbind.data.frame(refSeq_mrna$V1,refSeq_mrna$V2,refSeq_mrna$V3,refSeq_mrna$geneName,refSeq_mrna$V5,refSeq_mrna$V6,refSeq_mrna$refSeqTranscriptName,stringsAsFactors=F)
+
+
+refSeq_ncna_rearranged = cbind.data.frame(refSeq_ncna$V1,refSeq_ncna$V2,refSeq_ncna$V3,refSeq_ncna$geneName,refSeq_ncna$V5,refSeq_ncna$V6,refSeq_ncna$refSeqTranscriptName,stringsAsFactors=F)
+
+write.table(refSeq_mrna_rearranged,paste0(ucscDir, "/processed/refSeq_mrna_utrsPresent.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+
+
+write.table(refSeq_ncna_rearranged,paste0(ucscDir, "/processed/refSeq_ncrna_utrsPresent.bed"),sep="\t",quote = F,row.names = F,col.names = F)
+
+
+##### which are the refSeq transcripts that do not have UTRs ??? 
+
+
+refSeqGenes = read.table(paste0(ucscDir, "/refSeqGenes.bed"))
+
+refSeqGeneswithoutUTRs = setdiff( refSeqGenes$V4,refSeq_3primeAnnotation$refSeqTranscriptName)
+write.table(refSeqGeneswithoutUTRs,paste0(ucscDir, "/processed/refSeqGenesWithoutUTRs.txt"),sep="\t",quote = F,row.names = F)
+
+refrefSeqGeneswithoutUTRsNM <- refSeqGeneswithoutUTRs[grep("NM_", refSeqGeneswithoutUTRs)]
+write.table(refSeqGeneswithoutUTRs,paste0(ucscDir, "/processed/refSeqGenesWithoutUTRs.mrna.txt"),sep="\t",quote = F,row.names = F)
+```
+
+
+##### also re-writing exon and intron annotations ###
+
+
+
+```{r processingExonAndIntronAnnotations}
+
+refSeq_exonAnnotations = read.table(paste0(ucscDir, "/refSeq_mm10_exonAnnotations.bed"),stringsAsFactors = F)
+
+#### subset for protein coding genes :
+
+refSeq_exonAnnotations = refSeq_exonAnnotations[grep("NM_",refSeq_exonAnnotations$V4),]
+chromosomes_mm = paste("chr",c(1:19,"X","Y"),sep="")
+
+refSeq_exonAnnotations <- refSeq_exonAnnotations[is.element(refSeq_exonAnnotations$V1, chromosomes_mm),]
+
+
+refSeq_exonAnnotations_names = strsplit(refSeq_exonAnnotations$V4,split = "_",fixed = T)
+refSeq_exonAnnotations_names_combined = unlist(lapply(refSeq_exonAnnotations_names,function(x) paste(x[1],x[2],sep = "_")))
+refSeq_exonAnnotations$refSeqTranscriptName = refSeq_exonAnnotations_names_combined
+
+write.table(refSeq_exonAnnotations,paste0(ucscDir, "/processed/refSeq_exonAnnotations.bed"),sep="\t",row.names = F,col.names = F,quote = F)
+
+
+### same for the intron annotation :
+
+
+refSeq_intronAnnotations = read.table(paste0(ucscDir, "/refSeq_mm10_intronAnnotations.bed"),stringsAsFactors = F)
+
+#### subset for protein coding genes :
+
+refSeq_intronAnnotations = refSeq_intronAnnotations[grep("NM",refSeq_intronAnnotations$V4),]
+chromosomes_mm = paste("chr",c(1:19,"X","Y"),sep="")
+
+refSeq_intronAnnotations <- refSeq_intronAnnotations[is.element(refSeq_intronAnnotations$V1, chromosomes_mm), ]
+
+refSeq_intronAnnotations_names = strsplit(refSeq_intronAnnotations$V4,split = "_",fixed = T)
+refSeq_intronAnnotations_names_combined = unlist(lapply(refSeq_intronAnnotations_names,function(x) paste(x[1],x[2],sep = "_")))
+refSeq_intronAnnotations$refSeqTranscriptName = refSeq_intronAnnotations_names_combined
+
+write.table(refSeq_intronAnnotations,paste0(ucscDir,"/processed/refSeq_intronAnnotations.bed"),sep="\t",row.names = F,col.names = F,quote = F)
+
+
+```
+
+
+
+
+#### for the further processing steps, bed files have to have 7 columns: with chr, start, end, name, score, strand, transcript-id.
