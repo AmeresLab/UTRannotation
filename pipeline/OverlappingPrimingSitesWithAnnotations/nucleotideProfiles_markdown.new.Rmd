@@ -22,6 +22,7 @@ library(biomaRt)
 library(dplyr)
 #library(tidyr)
 library(tibble)
+library(GenomicRanges)
 ```
 ##### the functions for this part are sourced from another file (source("/Volumes/groups/bioinfo/shared/Ameres.GRP/incoming/3PrimeEndAnnotation/nucleotideProfiles_revised/OverlappingPrimingSitesWithAnnotations/scripts/overlappingHierarchical.R")). Thre should be 5 functions in this file :
 
